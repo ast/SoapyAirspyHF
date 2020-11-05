@@ -48,10 +48,10 @@ SoapyAirspyHF::SoapyAirspyHF(const SoapySDR::Kwargs &args)
     rfGain=4;
     hasgains=false;
 
-    bufferedElems = 0;
-    resetBuffer = false;
+    //bufferedElems = 0;
+    //resetBuffer = false;
     
-    streamActive = false;
+    //streamActive = false;
     sampleRateChanged.store(false);
     
     dev = nullptr;
@@ -98,7 +98,7 @@ SoapyAirspyHF::SoapyAirspyHF(const SoapySDR::Kwargs &args)
 
 SoapyAirspyHF::~SoapyAirspyHF(void)
 {
-    std::lock_guard <std::mutex> lock(_general_state_mutex);
+    //std::lock_guard <std::mutex> lock(_general_state_mutex);
     airspyhf_close(dev);
 }
 
@@ -199,7 +199,7 @@ void SoapyAirspyHF::setGainMode(const int direction, const size_t channel, const
     if (!hasgains) return;
     
 #ifdef HASGAINS
-    std::lock_guard <std::mutex> lock(_general_state_mutex);
+    //std::lock_guard <std::mutex> lock(_general_state_mutex);
     airspyhf_set_hf_agc(dev,agcMode=automatic ? 1:0);
 #endif
 }
@@ -227,7 +227,7 @@ void SoapyAirspyHF::setGain(const int direction, const size_t channel, const std
 {
     if (!hasgains) return;
 #ifdef HASGAINS
-    std::lock_guard <std::mutex> lock(_general_state_mutex);
+    //std::lock_guard <std::mutex> lock(_general_state_mutex);
     if (name == "LNA") {
         lnaGain = value>=3.0 ? 1 : 0;
         airspyhf_set_hf_lna(dev,lnaGain);
@@ -255,8 +255,8 @@ void SoapyAirspyHF::setFrequency(
     if (name == "RF")
     {
         centerFrequency = (uint32_t) frequency;
-        std::lock_guard <std::mutex> lock(_general_state_mutex);
-        resetBuffer = true;
+        //std::lock_guard <std::mutex> lock(_general_state_mutex);
+        //resetBuffer = true;
         SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting center freq: %d", centerFrequency);
         airspyhf_set_freq(dev, centerFrequency);
     }
@@ -312,7 +312,7 @@ void SoapyAirspyHF::setSampleRate(const int direction, const size_t channel, con
 
     if (sampleRate != rate) {
         sampleRate = rate;
-        resetBuffer = true;
+        //resetBuffer = true;
         sampleRateChanged.store(true);
     }
 }
@@ -326,7 +326,7 @@ std::vector<double> SoapyAirspyHF::listSampleRates(const int direction, const si
 {
     std::vector<double> results;
 
-    std::lock_guard <std::mutex> lock(_general_state_mutex);
+    //std::lock_guard <std::mutex> lock(_general_state_mutex);
 
     uint32_t numRates;
 	airspyhf_get_samplerates(dev, &numRates, 0);

@@ -104,7 +104,7 @@ public:
      * Direct buffer access API
      ******************************************************************/
 
-    size_t getNumDirectAccessBuffers(SoapySDR::Stream *stream);
+    /*size_t getNumDirectAccessBuffers(SoapySDR::Stream *stream);
 
     int getDirectAccessBufferAddrs(SoapySDR::Stream *stream, const size_t handle, void **buffs);
 
@@ -118,8 +118,9 @@ public:
 
     void releaseReadBuffer(
         SoapySDR::Stream *stream,
-        const size_t handle);
+        const size_t handle);*/
 
+    
     /*******************************************************************
      * Antenna API
      ******************************************************************/
@@ -216,7 +217,8 @@ private:
     uint32_t sampleRate, centerFrequency;
     unsigned int bufferLength;
     size_t numBuffers;
-    bool streamActive, rfBias, bitPack;
+    //bool streamActive, rfBias, bitPack;
+    bool rfBias, bitPack;
     uint8_t lnaGain,rfGain, agcMode;
     std::atomic_bool sampleRateChanged;
     int bytesPerSample;
@@ -227,12 +229,17 @@ public:
     //async api usage
     int rx_callback(airspyhf_transfer_t *t);
 
-    mutable std::mutex _general_state_mutex;
+    //mutable std::mutex _general_state_mutex;
 
-    std::mutex _buf_mutex;
-    std::condition_variable _buf_cond;
-
-    std::vector<std::vector<char> > _buffs;
+    // std::mutex _buf_mutex;
+    // std::condition_variable _buf_cond;
+    
+    void *_stream_buff;
+    std::mutex _stream_mutex;
+    std::condition_variable _stream_cond;
+    std::condition_variable _callback_done_cond;
+    
+    /*std::vector<std::vector<char> > _buffs;
     size_t	_buf_head;
     size_t	_buf_tail;
     std::atomic<size_t>	_buf_count;
@@ -240,5 +247,5 @@ public:
     std::atomic<bool> _overflowEvent;
     size_t bufferedElems;
     size_t _currentHandle;
-    bool resetBuffer;
+    bool resetBuffer;*/
 };

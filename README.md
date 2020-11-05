@@ -1,5 +1,9 @@
 # Soapy SDR plugin for AirspyHF+
 
+## This fork
+
+My fork. Trying to simply the code. Check simplestreaming branch.
+
 ## Dependencies
 
 * SoapySDR - https://github.com/pothosware/SoapySDR/wiki
