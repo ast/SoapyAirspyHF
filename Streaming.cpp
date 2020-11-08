@@ -67,7 +67,9 @@ static int _rx_callback(airspyhf_transfer_t *t)
 
 int SoapyAirspyHF::rx_callback(airspyhf_transfer_t *t)
 {
+    // Take stream mutex
     std::unique_lock<std::mutex> lock(_stream_mutex);
+    
     while ((_stream_buff == nullptr) && airspyhf_is_streaming(dev))
         _stream_cond.wait(lock);
     _dropped_samples = t->dropped_samples;
@@ -145,17 +147,17 @@ int SoapyAirspyHF::activateStream(SoapySDR::Stream *stream,
 
 int SoapyAirspyHF::deactivateStream(SoapySDR::Stream *stream, const int flags, const long long timeNs)
 {
+    // Take stream mutex
+    std::unique_lock<std::mutex> lock(_stream_mutex);
+
     SoapySDR::log(SOAPY_SDR_INFO, "deactivateStream");
     
     if (flags != 0) {
         SoapySDR::log(SOAPY_SDR_FATAL, "SOAPY_SDR_NOT_SUPPORTED");
         return SOAPY_SDR_NOT_SUPPORTED;
     }
-    
+    // Stop
     airspyhf_stop(dev);
-    // make sure we don't get stuck somewhere.
-    _stream_cond.notify_all();
-    _callback_done_cond.notify_all();
     
     return 0;
 }
@@ -168,22 +170,23 @@ int SoapyAirspyHF::readStream(SoapySDR::Stream *stream,
                               const long timeoutUs)
 {
     // TODO: check flags?
-    if(!airspyhf_is_streaming(dev)) {
-        // strictly speaking need to implement timeout
-        return SOAPY_SDR_TIMEOUT;
-    }
     
-    if (numElems < _airspyhf_output_size) {
+    // Take stream mutex
+    std::unique_lock<std::mutex> lock(_stream_mutex);
+    
+    if(!airspyhf_is_streaming(dev)) {
+        // stop has been called
+        _stream_cond.notify_one();
+        return SOAPY_SDR_TIMEOUT;
+    } else if (numElems < _airspyhf_output_size) {
         // wait until we get called with more
         return 0;
     }
     
-    std::unique_lock<std::mutex> lock(_stream_mutex);
     _stream_buff = buffs[0];
     _dropped_samples = 0;
     // Notify callback that the buffer is ready for samples
     _stream_cond.notify_one();
-    
     // Wait for callback to copy, the callback will set this to nullptr when done
     if (timeNs) {
         // Wait with timeout

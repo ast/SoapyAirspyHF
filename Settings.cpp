@@ -34,6 +34,8 @@ centerFrequency(0),
 agcMode(1),
 lnaGain(0),
 rfGain(4),
+_dropped_samples(0),
+_stream_buff(nullptr),
 dev(nullptr)
 {
     std::stringstream serialstr;
