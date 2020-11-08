@@ -40,8 +40,9 @@
 
 #include <libairspyhf/airspyhf.h>
 
-#define DEFAULT_BUFFER_BYTES 262144
-#define DEFAULT_NUM_BUFFERS 8
+// TODO
+//#define DEFAULT_BUFFER_BYTES 262144
+//#define DEFAULT_NUM_BUFFERS 8
 #define MAX_DEVICES 32
 
 class SoapyAirspyHF: public SoapySDR::Device
@@ -225,27 +226,13 @@ private:
     //uint8_t lnaGain, mixerGain, vgaGain;
     SoapySDR::ConverterRegistry::ConverterFunction converterFunction;
     
-public:
-    //async api usage
-    int rx_callback(airspyhf_transfer_t *t);
-
-    //mutable std::mutex _general_state_mutex;
-
-    // std::mutex _buf_mutex;
-    // std::condition_variable _buf_cond;
-    
+    uint64_t _dropped_samples;
     void *_stream_buff;
     std::mutex _stream_mutex;
     std::condition_variable _stream_cond;
     std::condition_variable _callback_done_cond;
     
-    /*std::vector<std::vector<char> > _buffs;
-    size_t	_buf_head;
-    size_t	_buf_tail;
-    std::atomic<size_t>	_buf_count;
-    char *_currentBuff;
-    std::atomic<bool> _overflowEvent;
-    size_t bufferedElems;
-    size_t _currentHandle;
-    bool resetBuffer;*/
+public:
+    //async api usage
+    int rx_callback(airspyhf_transfer_t *t);
 };

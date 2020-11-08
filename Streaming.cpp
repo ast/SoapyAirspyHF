@@ -73,10 +73,15 @@ int SoapyAirspyHF::rx_callback(airspyhf_transfer_t *t)
     
     std::unique_lock<std::mutex> lock(_stream_mutex);
     while (_stream_buff == nullptr) _stream_cond.wait(lock);
+    _dropped_samples = t->dropped_samples;
     if (t->dropped_samples) {
         SoapySDR::logf(SOAPY_SDR_INFO, "rx_callback dropped: %d", t->dropped_samples);
     }
-    std::memcpy(_stream_buff, t->samples, 8 * 2048);
+    
+    // Convert into stream buffer
+    converterFunction(t->samples, _stream_buff, t->sample_count, 1.0);
+    //std::memcpy(_stream_buff, t->samples, 8 * 2048);
+    
     _stream_buff = nullptr;
     _callback_done_cond.notify_one();
     
@@ -106,6 +111,8 @@ SoapySDR::Stream *SoapyAirspyHF::setupStream(const int direction,
     
     converterFunction = SoapySDR::ConverterRegistry::getFunction(SOAPY_NATIVE_FORMAT, format, SoapySDR::ConverterRegistry::GENERIC);
     
+    //bytesPerSample = SoapySDR::formatToSize(SOAPY_NATIVE_FORMAT);
+    
     sampleRateChanged.store(true);
     
     return (SoapySDR::Stream *) this;
@@ -134,8 +141,10 @@ int SoapyAirspyHF::activateStream(SoapySDR::Stream *stream,
         airspyhf_set_samplerate(dev, sampleRate);
         sampleRateChanged.store(false);
     }
-    
+
+    _dropped_samples = 0;
     _stream_buff = nullptr;
+    
     // TODO: error check
     airspyhf_start(dev, &_rx_callback, (void *) this);
     
@@ -162,12 +171,13 @@ int SoapyAirspyHF::readStream(SoapySDR::Stream *stream,
                               long long &timeNs,
                               const long timeoutUs)
 {
-    assert(numElems == 2048);
-    
     // TODO: check flags?
+    if (numElems != 2048) {
+        return SOAPY_SDR_STREAM_ERROR;
+    }
     
     if (!airspyhf_is_streaming(dev)) {
-        return 0;
+        return SOAPY_SDR_TIMEOUT;
     }
     
     if (sampleRateChanged.load()) {
@@ -180,22 +190,27 @@ int SoapyAirspyHF::readStream(SoapySDR::Stream *stream,
     
     std::unique_lock<std::mutex> lock(_stream_mutex);
     _stream_buff = buffs[0];
+    _dropped_samples = 0;
     // Notify callback that the buffer is ready for samples
     _stream_cond.notify_one();
-    // Wait for callback to copy, the callback will set this to nullptr when done
     
+    // Wait for callback to copy, the callback will set this to nullptr when done
     if (timeNs) {
         // Wait with timeout
         auto timeout_duration = std::chrono::nanoseconds(timeNs);
         while (_stream_buff != nullptr) {
             if(_callback_done_cond.wait_for(lock, timeout_duration) == std::cv_status::timeout) {
                 SoapySDR::logf(SOAPY_SDR_INFO, "readStream timeout: %d", timeNs);
-                return 0;
+                return SOAPY_SDR_TIMEOUT;
             }
         }
     } else {
         // Wait without timeout
         while (_stream_buff != nullptr) _callback_done_cond.wait(lock);
+    }
+    
+    if (_dropped_samples) {
+        return SOAPY_SDR_OVERFLOW;
     }
     
     return (int) numElems;
