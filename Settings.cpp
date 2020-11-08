@@ -28,20 +28,15 @@
 #include <cassert>
 #include <complex>
 
-SoapyAirspyHF::SoapyAirspyHF(const SoapySDR::Kwargs &args)
+SoapyAirspyHF::SoapyAirspyHF(const SoapySDR::Kwargs &args):
+sampleRate(768000),
+centerFrequency(0),
+agcMode(1),
+lnaGain(0),
+rfGain(4),
+dev(nullptr)
 {
-    sampleRate = 768000;
-    centerFrequency = 0;
-    
-    agcMode = 1;
-    rfBias = false;
-    bitPack = false;
-    lnaGain=0;
-    rfGain=4;
-    
-    dev = nullptr;
     std::stringstream serialstr;
-    //serialstr.str("");
     
     if (args.count("serial") != 0)
     {
@@ -70,6 +65,7 @@ SoapyAirspyHF::SoapyAirspyHF(const SoapySDR::Kwargs &args)
         airspyhf_set_hf_agc(dev, agcMode);
     }
     
+    // TODO: maybe fix hardcoding
     airspyhf_set_lib_dsp(dev, 1);
     airspyhf_set_hf_agc_threshold(dev, 1);
     
@@ -107,9 +103,7 @@ SoapySDR::Kwargs SoapyAirspyHF::getHardwareInfo(void) const
     //key/value pairs for any useful information
     //this also gets printed in --probe
     SoapySDR::Kwargs args;
-    
     std::stringstream serialstr;
-    //serialstr.str("");
     serialstr << std::hex << serial;
     args["serial"] = serialstr.str();
     
@@ -138,12 +132,14 @@ std::vector<std::string> SoapyAirspyHF::listAntennas(const int direction, const 
 
 void SoapyAirspyHF::setAntenna(const int direction, const size_t channel, const std::string &name)
 {
-    // TODO
+    // Not configurable
+    SoapySDR_logf(SOAPY_SDR_INFO, "Antenna not configurable");
 }
 
 std::string SoapyAirspyHF::getAntenna(const int direction, const size_t channel) const
 {
     // eventually could change this to HF/VHF
+    // based on frequency because selection is automatic
     return "RX";
 }
 
@@ -163,9 +159,9 @@ bool SoapyAirspyHF::hasIQBalance(const int direction, const size_t channel) cons
 void SoapyAirspyHF::setIQBalance(const int direction, const size_t channel, const std::complex<double> &balance) {
     int ret;
     _iq_correction_w = std::arg(balance);
-
+    
     SoapySDR_logf(SOAPY_SDR_INFO, "Setting IQBalance: %f", _iq_correction_w);
-
+    
     ret = airspyhf_set_optimal_iq_correction_point(dev, _iq_correction_w);
     assert(ret == AIRSPYHF_SUCCESS);
 }
@@ -191,7 +187,8 @@ std::vector<std::string> SoapyAirspyHF::listGains(const int direction, const siz
 
 bool SoapyAirspyHF::hasGainMode(const int direction, const size_t channel) const
 {
-    return true; // we have agc on/off setting or it's forced on, either way AGC is supported
+    // We have agc on/off setting or it's forced on, either way AGC is supported
+    return true;
 }
 
 void SoapyAirspyHF::setGainMode(const int direction, const size_t channel, const bool automatic)
@@ -213,30 +210,41 @@ SoapySDR::Range SoapyAirspyHF::getGainRange(const int direction, const size_t ch
 
 double SoapyAirspyHF::getGain(const int direction, const size_t channel, const std::string &name) const
 {
-    if (name=="LNA") return lnaGain*6.0;
-    return -(int)rfGain*6.0;
+    if (name == "LNA") {
+        return lnaGain * 6.0;
+    }
+    else if(name == "RF") {
+        return rfGain * 6.0;
+    }
+    else {
+        SoapySDR_logf(SOAPY_SDR_DEBUG, "Unknown gain: %s", name.c_str());
+        return 0.;
+    }
 }
 
 void SoapyAirspyHF::setGain(const int direction, const size_t channel, const std::string &name, const double value)
 {
+    int ret;
+    
     if (name == "LNA") {
-        lnaGain = value>=3.0 ? 1 : 0;
-        airspyhf_set_hf_lna(dev,lnaGain);
-        return;
+        lnaGain = value >= 3.0 ? 1 : 0;
+        SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting LNA gain: %f = %d", value, lnaGain);
+        ret = airspyhf_set_hf_lna(dev, lnaGain);
+        assert(ret == AIRSPYHF_SUCCESS);
     }
-    double newval = -value;
-    if (newval<0.0) newval=0.0;
-    if (newval>48.0) newval=48.0;
-    rfGain=(uint8_t)(newval/6.0+0.499);
-    airspyhf_set_hf_att(dev,rfGain);
+    else if(name == "RF") {
+        rfGain = std::round(-value/6.0);
+        SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting RF gain: %f = %d", value, rfGain);
+        ret = airspyhf_set_hf_att(dev, rfGain);
+        assert(ret == AIRSPYHF_SUCCESS);
+    }
 }
 
 /*******************************************************************
  * Frequency API
  ******************************************************************/
 
-void SoapyAirspyHF::setFrequency(
-                                 const int direction,
+void SoapyAirspyHF::setFrequency(const int direction,
                                  const size_t channel,
                                  const std::string &name,
                                  const double frequency,
@@ -252,12 +260,12 @@ void SoapyAirspyHF::setFrequency(
 
 double SoapyAirspyHF::getFrequency(const int direction, const size_t channel, const std::string &name) const
 {
-    if (name == "RF")
-    {
+    if (name == "RF") {
         return (double) centerFrequency;
+    } else {
+        SoapySDR_logf(SOAPY_SDR_DEBUG, "Unknown frequency: %s", name.c_str());
+        return 0;
     }
-    
-    return 0;
 }
 
 std::vector<std::string> SoapyAirspyHF::listFrequencies(const int direction, const size_t channel) const
@@ -267,16 +275,15 @@ std::vector<std::string> SoapyAirspyHF::listFrequencies(const int direction, con
     return names;
 }
 
-SoapySDR::RangeList SoapyAirspyHF::getFrequencyRange(
-                                                     const int direction,
+SoapySDR::RangeList SoapyAirspyHF::getFrequencyRange(const int direction,
                                                      const size_t channel,
                                                      const std::string &name) const
 {
     SoapySDR::RangeList results;
     if (name == "RF")
     {
-        results.push_back(SoapySDR::Range(9000,31000000));
-        results.push_back(SoapySDR::Range(60000000,260000000));
+        results.push_back(SoapySDR::Range(9e3, 31e6));
+        results.push_back(SoapySDR::Range(60e6, 260e6));
     }
     return results;
 }
@@ -298,12 +305,14 @@ void SoapyAirspyHF::setSampleRate(const int direction, const size_t channel, con
 {
     int ret;
     
-    SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting sample rate: %d", sampleRate);
-    
     if (sampleRate != rate) {
         sampleRate = rate;
         ret = airspyhf_set_samplerate(dev, rate);
         assert(ret == AIRSPYHF_SUCCESS);
+        int is_low_if = airspyhf_is_low_if(dev);
+        
+        SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting sample rate: %d, is low IF: %d",
+                      sampleRate, is_low_if);
     }
 }
 
@@ -314,6 +323,7 @@ double SoapyAirspyHF::getSampleRate(const int direction, const size_t channel) c
 
 std::vector<double> SoapyAirspyHF::listSampleRates(const int direction, const size_t channel) const
 {
+    int ret;
     std::vector<double> results;
     
     uint32_t numRates;
@@ -322,7 +332,8 @@ std::vector<double> SoapyAirspyHF::listSampleRates(const int direction, const si
     std::vector<uint32_t> samplerates;
     samplerates.resize(numRates);
     
-    airspyhf_get_samplerates(dev, samplerates.data(), numRates);
+    ret = airspyhf_get_samplerates(dev, samplerates.data(), numRates);
+    assert(ret == AIRSPYHF_SUCCESS);
     
     for (auto i: samplerates) {
         results.push_back(i);
@@ -355,17 +366,33 @@ std::vector<double> SoapyAirspyHF::listBandwidths(const int direction, const siz
 SoapySDR::ArgInfoList SoapyAirspyHF::getSettingInfo(void) const
 {
     SoapySDR::ArgInfoList setArgs;
-    
     return setArgs;
 }
 
 void SoapyAirspyHF::writeSetting(const std::string &key, const std::string &value)
 {
-    
 }
 
 std::string SoapyAirspyHF::readSetting(const std::string &key) const
 {
     SoapySDR_logf(SOAPY_SDR_WARNING, "Unknown setting '%s'", key.c_str());
     return "";
+}
+
+/*******************************************************************
+ * Clocking API
+ ******************************************************************/
+std::vector<std::string> SoapyAirspyHF::listClockSources(void) const {
+    std::vector<std::string> sources;
+    sources.push_back(getClockSource());
+    return sources;
+}
+
+std::string SoapyAirspyHF::getClockSource(void) const {
+    return "internal";
+}
+
+double SoapyAirspyHF::getMasterClockRate(void) const {
+    // TODO: fixed but might change with firmware
+    return 36.864e6;
 }

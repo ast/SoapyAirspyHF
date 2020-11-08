@@ -68,18 +68,20 @@ static int _rx_callback(airspyhf_transfer_t *t)
 int SoapyAirspyHF::rx_callback(airspyhf_transfer_t *t)
 {
     std::unique_lock<std::mutex> lock(_stream_mutex);
-    while (_stream_buff == nullptr) _stream_cond.wait(lock);
+    while ((_stream_buff == nullptr) && airspyhf_is_streaming(dev))
+        _stream_cond.wait(lock);
     _dropped_samples = t->dropped_samples;
     if (t->dropped_samples) {
         _dropped_samples = t->dropped_samples;
     }
-    
     // Convert into stream buffer
-    converterFunction(t->samples, _stream_buff, t->sample_count, 1.0);
-    
+    if(_stream_buff != nullptr) {
+        converterFunction(t->samples, _stream_buff, t->sample_count, 1.0);
+    }
     _stream_buff = nullptr;
     _callback_done_cond.notify_one();
     
+    // 0 == success
     return 0;
 }
 
@@ -150,9 +152,10 @@ int SoapyAirspyHF::deactivateStream(SoapySDR::Stream *stream, const int flags, c
         return SOAPY_SDR_NOT_SUPPORTED;
     }
     
-    // TODO: error check?
-    // TODO: make sure we don't get stuck in readStream
     airspyhf_stop(dev);
+    // make sure we don't get stuck somewhere.
+    _stream_cond.notify_all();
+    _callback_done_cond.notify_all();
     
     return 0;
 }
@@ -185,7 +188,7 @@ int SoapyAirspyHF::readStream(SoapySDR::Stream *stream,
     if (timeNs) {
         // Wait with timeout
         auto timeout_duration = std::chrono::nanoseconds(timeNs);
-        while (_stream_buff != nullptr) {
+        while ((_stream_buff != nullptr) && airspyhf_is_streaming(dev)) {
             if(_callback_done_cond.wait_for(lock, timeout_duration) == std::cv_status::timeout) {
                 SoapySDR::logf(SOAPY_SDR_INFO, "readStream timeout: %d", timeNs);
                 return SOAPY_SDR_TIMEOUT;
@@ -193,14 +196,13 @@ int SoapyAirspyHF::readStream(SoapySDR::Stream *stream,
         }
     } else {
         // Wait without timeout
-        while (_stream_buff != nullptr) _callback_done_cond.wait(lock);
+        while ((_stream_buff != nullptr) && airspyhf_is_streaming(dev)) _callback_done_cond.wait(lock);
     }
     
     if (_dropped_samples) {
         SoapySDR::logf(SOAPY_SDR_INFO, "dropped samples: %d", _dropped_samples);
         return SOAPY_SDR_OVERFLOW;
     }
-    
-    // TODO: fix this
+
     return (int) _airspyhf_output_size;
 }

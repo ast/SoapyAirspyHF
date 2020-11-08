@@ -136,16 +136,9 @@ public:
     /*******************************************************************
      * Clocking API
      ******************************************************************/
-    
-    /*void setMasterClockRate(const double rate);
-    double getMasterClockRate(void) const;
-    RangeList getMasterClockRates(void) const;
-    void setReferenceClockRate(const double rate);
-    double getReferenceClockRate(void) const;
-    RangeList getReferenceClockRates(void) const;
     std::vector<std::string> listClockSources(void) const;
-    void setClockSource(const std::string &source);
-    std::string getClockSource(void) const;*/
+    std::string getClockSource(void) const;
+    double getMasterClockRate(void) const;
     
     /*******************************************************************
      * Settings API
@@ -159,8 +152,7 @@ private:
     uint64_t serial;
     airspyhf_device_t *dev;
     
-    //cached settings
-    bool hasgains;
+    // cached settings
     uint32_t sampleRate, centerFrequency;
     unsigned int bufferLength;
     size_t numBuffers;
