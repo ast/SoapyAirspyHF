@@ -1,2 +1,4 @@
 build/
+._*
+.DS_Store
 #xcodesoapyairspyhf/

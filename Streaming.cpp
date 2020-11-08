@@ -28,6 +28,7 @@
 #include <SoapySDR/Formats.hpp>
 #include <SoapySDR/ConverterRegistry.hpp>
 #include <cstring> // memcpy
+#include <cassert>
 #include <chrono>
 
 #define SOAPY_NATIVE_FORMAT SOAPY_SDR_CF32
@@ -66,21 +67,15 @@ static int _rx_callback(airspyhf_transfer_t *t)
 
 int SoapyAirspyHF::rx_callback(airspyhf_transfer_t *t)
 {
-    if (sampleRateChanged.load()) {
-        // Restart if sample rate changed
-        return 1;
-    }
-    
     std::unique_lock<std::mutex> lock(_stream_mutex);
     while (_stream_buff == nullptr) _stream_cond.wait(lock);
     _dropped_samples = t->dropped_samples;
     if (t->dropped_samples) {
-        SoapySDR::logf(SOAPY_SDR_INFO, "rx_callback dropped: %d", t->dropped_samples);
+        _dropped_samples = t->dropped_samples;
     }
     
     // Convert into stream buffer
     converterFunction(t->samples, _stream_buff, t->sample_count, 1.0);
-    //std::memcpy(_stream_buff, t->samples, 8 * 2048);
     
     _stream_buff = nullptr;
     _callback_done_cond.notify_one();
@@ -111,10 +106,6 @@ SoapySDR::Stream *SoapyAirspyHF::setupStream(const int direction,
     
     converterFunction = SoapySDR::ConverterRegistry::getFunction(SOAPY_NATIVE_FORMAT, format, SoapySDR::ConverterRegistry::GENERIC);
     
-    //bytesPerSample = SoapySDR::formatToSize(SOAPY_NATIVE_FORMAT);
-    
-    sampleRateChanged.store(true);
-    
     return (SoapySDR::Stream *) this;
 }
 
@@ -124,7 +115,7 @@ void SoapyAirspyHF::closeStream(SoapySDR::Stream *stream)
 
 size_t SoapyAirspyHF::getStreamMTU(SoapySDR::Stream *stream) const
 {
-    return airspyhf_get_output_size(dev);
+    return _airspyhf_output_size;
 }
 
 int SoapyAirspyHF::activateStream(SoapySDR::Stream *stream,
@@ -132,33 +123,35 @@ int SoapyAirspyHF::activateStream(SoapySDR::Stream *stream,
                                   const long long timeNs,
                                   const size_t numElems)
 {
+    int ret;
+    
+    SoapySDR::log(SOAPY_SDR_INFO, "activateStream");
+    
     if (flags != 0) {
         SoapySDR::log(SOAPY_SDR_FATAL, "SOAPY_SDR_NOT_SUPPORTED");
         return SOAPY_SDR_NOT_SUPPORTED;
     }
     
-    if (sampleRateChanged.load()) {
-        airspyhf_set_samplerate(dev, sampleRate);
-        sampleRateChanged.store(false);
-    }
-
     _dropped_samples = 0;
     _stream_buff = nullptr;
     
-    // TODO: error check
-    airspyhf_start(dev, &_rx_callback, (void *) this);
+    ret = airspyhf_start(dev, &_rx_callback, (void *) this);
+    assert(ret == AIRSPYHF_SUCCESS);
     
     return 0;
 }
 
 int SoapyAirspyHF::deactivateStream(SoapySDR::Stream *stream, const int flags, const long long timeNs)
 {
+    SoapySDR::log(SOAPY_SDR_INFO, "deactivateStream");
+    
     if (flags != 0) {
         SoapySDR::log(SOAPY_SDR_FATAL, "SOAPY_SDR_NOT_SUPPORTED");
         return SOAPY_SDR_NOT_SUPPORTED;
     }
     
     // TODO: error check?
+    // TODO: make sure we don't get stuck in readStream
     airspyhf_stop(dev);
     
     return 0;
@@ -172,20 +165,14 @@ int SoapyAirspyHF::readStream(SoapySDR::Stream *stream,
                               const long timeoutUs)
 {
     // TODO: check flags?
-    if (numElems != 2048) {
-        return SOAPY_SDR_STREAM_ERROR;
-    }
-    
-    if (!airspyhf_is_streaming(dev)) {
+    if(!airspyhf_is_streaming(dev)) {
+        // strictly speaking need to implement timeout
         return SOAPY_SDR_TIMEOUT;
     }
     
-    if (sampleRateChanged.load()) {
-        // TODO: not sure about this
-        airspyhf_stop(dev);
-        airspyhf_set_samplerate(dev, sampleRate);
-        airspyhf_start(dev, &_rx_callback, (void *) this);
-        sampleRateChanged.store(false);
+    if (numElems < _airspyhf_output_size) {
+        // wait until we get called with more
+        return 0;
     }
     
     std::unique_lock<std::mutex> lock(_stream_mutex);
@@ -210,8 +197,10 @@ int SoapyAirspyHF::readStream(SoapySDR::Stream *stream,
     }
     
     if (_dropped_samples) {
+        SoapySDR::logf(SOAPY_SDR_INFO, "dropped samples: %d", _dropped_samples);
         return SOAPY_SDR_OVERFLOW;
     }
     
-    return (int) numElems;
+    // TODO: fix this
+    return (int) _airspyhf_output_size;
 }

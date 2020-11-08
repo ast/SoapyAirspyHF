@@ -1,19 +1,19 @@
 /*
  * The MIT License (MIT)
- * 
+ *
  * Copyright (c) 2015 Charles J. Cliffe
  * Copyright (c) 2018 Corey Stotts
-
+ 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
-
+ 
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
-
+ 
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -25,39 +25,24 @@
 
 
 #include "SoapyAirspyHF.hpp"
-
-#if AIRSPYHF_VER_MAJOR >= 1
-#if AIRSPYHF_VER_MINOR >= 1
-#if AIRSPYHF_VER_REVISION >= 2
-#define HASGAINS
-#endif
-#endif
-#endif
+#include <cassert>
+#include <complex>
 
 SoapyAirspyHF::SoapyAirspyHF(const SoapySDR::Kwargs &args)
 {
     sampleRate = 768000;
     centerFrequency = 0;
-
-    numBuffers = DEFAULT_NUM_BUFFERS;
-
+    
     agcMode = 1;
     rfBias = false;
     bitPack = false;
     lnaGain=0;
     rfGain=4;
-    hasgains=false;
-
-    //bufferedElems = 0;
-    //resetBuffer = false;
-    
-    //streamActive = false;
-    sampleRateChanged.store(false);
     
     dev = nullptr;
     std::stringstream serialstr;
-    serialstr.str("");
-
+    //serialstr.str("");
+    
     if (args.count("serial") != 0)
     {
         try {
@@ -79,15 +64,17 @@ SoapyAirspyHF::SoapyAirspyHF(const SoapySDR::Kwargs &args)
             throw std::runtime_error("Unable to open AirspyHF device");
         }
     }
-
-#ifdef HASGAINS
-    if (airspyhf_set_hf_att(dev,rfGain)==AIRSPYHF_SUCCESS) {
-        hasgains=true;
-        airspyhf_set_hf_lna(dev,lnaGain);
-        airspyhf_set_hf_agc(dev,agcMode);
+    
+    if (airspyhf_set_hf_att(dev,rfGain) == AIRSPYHF_SUCCESS) {
+        airspyhf_set_hf_lna(dev, lnaGain);
+        airspyhf_set_hf_agc(dev, agcMode);
     }
-#endif
-
+    
+    airspyhf_set_lib_dsp(dev, 1);
+    airspyhf_set_hf_agc_threshold(dev, 1);
+    
+    _airspyhf_output_size = airspyhf_get_output_size(dev);
+    
     //apply arguments to settings when they match
     for (const auto &info : this->getSettingInfo())
     {
@@ -98,7 +85,6 @@ SoapyAirspyHF::SoapyAirspyHF(const SoapySDR::Kwargs &args)
 
 SoapyAirspyHF::~SoapyAirspyHF(void)
 {
-    //std::lock_guard <std::mutex> lock(_general_state_mutex);
     airspyhf_close(dev);
 }
 
@@ -121,12 +107,12 @@ SoapySDR::Kwargs SoapyAirspyHF::getHardwareInfo(void) const
     //key/value pairs for any useful information
     //this also gets printed in --probe
     SoapySDR::Kwargs args;
-
+    
     std::stringstream serialstr;
-    serialstr.str("");
+    //serialstr.str("");
     serialstr << std::hex << serial;
     args["serial"] = serialstr.str();
-
+    
     return args;
 }
 
@@ -170,6 +156,24 @@ bool SoapyAirspyHF::hasDCOffsetMode(const int direction, const size_t channel) c
     return false;
 }
 
+bool SoapyAirspyHF::hasIQBalance(const int direction, const size_t channel) const {
+    return true;
+}
+
+void SoapyAirspyHF::setIQBalance(const int direction, const size_t channel, const std::complex<double> &balance) {
+    int ret;
+    _iq_correction_w = std::arg(balance);
+
+    SoapySDR_logf(SOAPY_SDR_INFO, "Setting IQBalance: %f", _iq_correction_w);
+
+    ret = airspyhf_set_optimal_iq_correction_point(dev, _iq_correction_w);
+    assert(ret == AIRSPYHF_SUCCESS);
+}
+std::complex<double> SoapyAirspyHF::getIQBalance(const int direction, const size_t channel) const {
+    return std::complex<double>(std::cos(_iq_correction_w), std::sin(_iq_correction_w));
+}
+
+
 /*******************************************************************
  * Gain API
  ******************************************************************/
@@ -179,12 +183,9 @@ std::vector<std::string> SoapyAirspyHF::listGains(const int direction, const siz
     //list available gain elements,
     //the functions below have a "name" parameter
     std::vector<std::string> results;
-
-    if (hasgains) {
-        results.push_back("LNA");
-        results.push_back("RF");
-    }
-
+    results.push_back("LNA");
+    results.push_back("RF");
+    
     return results;
 }
 
@@ -195,13 +196,8 @@ bool SoapyAirspyHF::hasGainMode(const int direction, const size_t channel) const
 
 void SoapyAirspyHF::setGainMode(const int direction, const size_t channel, const bool automatic)
 {
-    //SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting AGC: %s", automatic ? "Automatic" : "Manual");
-    if (!hasgains) return;
-    
-#ifdef HASGAINS
-    //std::lock_guard <std::mutex> lock(_general_state_mutex);
+    SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting AGC: %s", automatic ? "Automatic" : "Manual");
     airspyhf_set_hf_agc(dev,agcMode=automatic ? 1:0);
-#endif
 }
 
 bool SoapyAirspyHF::getGainMode(const int direction, const size_t channel) const
@@ -211,23 +207,18 @@ bool SoapyAirspyHF::getGainMode(const int direction, const size_t channel) const
 
 SoapySDR::Range SoapyAirspyHF::getGainRange(const int direction, const size_t channel, const std::string &name) const
 {
-    if (!hasgains) return SoapySDR::Range(0.0, 0.0);
     if (name == "LNA") return SoapySDR::Range(0,6,6);
     return SoapySDR::Range(-48.0,0,6);
 }
 
 double SoapyAirspyHF::getGain(const int direction, const size_t channel, const std::string &name) const
 {
-    if (!hasgains) return 0.0;
     if (name=="LNA") return lnaGain*6.0;
     return -(int)rfGain*6.0;
 }
 
 void SoapyAirspyHF::setGain(const int direction, const size_t channel, const std::string &name, const double value)
 {
-    if (!hasgains) return;
-#ifdef HASGAINS
-    //std::lock_guard <std::mutex> lock(_general_state_mutex);
     if (name == "LNA") {
         lnaGain = value>=3.0 ? 1 : 0;
         airspyhf_set_hf_lna(dev,lnaGain);
@@ -238,7 +229,6 @@ void SoapyAirspyHF::setGain(const int direction, const size_t channel, const std
     if (newval>48.0) newval=48.0;
     rfGain=(uint8_t)(newval/6.0+0.499);
     airspyhf_set_hf_att(dev,rfGain);
-#endif
 }
 
 /*******************************************************************
@@ -246,17 +236,15 @@ void SoapyAirspyHF::setGain(const int direction, const size_t channel, const std
  ******************************************************************/
 
 void SoapyAirspyHF::setFrequency(
-        const int direction,
-        const size_t channel,
-        const std::string &name,
-        const double frequency,
-        const SoapySDR::Kwargs &args)
+                                 const int direction,
+                                 const size_t channel,
+                                 const std::string &name,
+                                 const double frequency,
+                                 const SoapySDR::Kwargs &args)
 {
     if (name == "RF")
     {
         centerFrequency = (uint32_t) frequency;
-        //std::lock_guard <std::mutex> lock(_general_state_mutex);
-        //resetBuffer = true;
         SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting center freq: %d", centerFrequency);
         airspyhf_set_freq(dev, centerFrequency);
     }
@@ -268,7 +256,7 @@ double SoapyAirspyHF::getFrequency(const int direction, const size_t channel, co
     {
         return (double) centerFrequency;
     }
-
+    
     return 0;
 }
 
@@ -280,15 +268,15 @@ std::vector<std::string> SoapyAirspyHF::listFrequencies(const int direction, con
 }
 
 SoapySDR::RangeList SoapyAirspyHF::getFrequencyRange(
-        const int direction,
-        const size_t channel,
-        const std::string &name) const
+                                                     const int direction,
+                                                     const size_t channel,
+                                                     const std::string &name) const
 {
     SoapySDR::RangeList results;
     if (name == "RF")
     {
         results.push_back(SoapySDR::Range(9000,31000000));
-	results.push_back(SoapySDR::Range(60000000,260000000));
+        results.push_back(SoapySDR::Range(60000000,260000000));
     }
     return results;
 }
@@ -296,9 +284,9 @@ SoapySDR::RangeList SoapyAirspyHF::getFrequencyRange(
 SoapySDR::ArgInfoList SoapyAirspyHF::getFrequencyArgsInfo(const int direction, const size_t channel) const
 {
     SoapySDR::ArgInfoList freqArgs;
-
+    
     // TODO: frequency arguments
-
+    
     return freqArgs;
 }
 
@@ -308,12 +296,14 @@ SoapySDR::ArgInfoList SoapyAirspyHF::getFrequencyArgsInfo(const int direction, c
 
 void SoapyAirspyHF::setSampleRate(const int direction, const size_t channel, const double rate)
 {
+    int ret;
+    
     SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting sample rate: %d", sampleRate);
-
+    
     if (sampleRate != rate) {
         sampleRate = rate;
-        //resetBuffer = true;
-        sampleRateChanged.store(true);
+        ret = airspyhf_set_samplerate(dev, rate);
+        assert(ret == AIRSPYHF_SUCCESS);
     }
 }
 
@@ -325,21 +315,19 @@ double SoapyAirspyHF::getSampleRate(const int direction, const size_t channel) c
 std::vector<double> SoapyAirspyHF::listSampleRates(const int direction, const size_t channel) const
 {
     std::vector<double> results;
-
-    //std::lock_guard <std::mutex> lock(_general_state_mutex);
-
+    
     uint32_t numRates;
-	airspyhf_get_samplerates(dev, &numRates, 0);
-
-	std::vector<uint32_t> samplerates;
+    airspyhf_get_samplerates(dev, &numRates, 0);
+    
+    std::vector<uint32_t> samplerates;
     samplerates.resize(numRates);
     
-	airspyhf_get_samplerates(dev, samplerates.data(), numRates);
-
-	for (auto i: samplerates) {
+    airspyhf_get_samplerates(dev, samplerates.data(), numRates);
+    
+    for (auto i: samplerates) {
         results.push_back(i);
-	}
-
+    }
+    
     return results;
 }
 
@@ -356,7 +344,7 @@ double SoapyAirspyHF::getBandwidth(const int direction, const size_t channel) co
 std::vector<double> SoapyAirspyHF::listBandwidths(const int direction, const size_t channel) const
 {
     std::vector<double> results;
-
+    
     return results;
 }
 
@@ -367,13 +355,13 @@ std::vector<double> SoapyAirspyHF::listBandwidths(const int direction, const siz
 SoapySDR::ArgInfoList SoapyAirspyHF::getSettingInfo(void) const
 {
     SoapySDR::ArgInfoList setArgs;
- 
+    
     return setArgs;
 }
 
 void SoapyAirspyHF::writeSetting(const std::string &key, const std::string &value)
 {
-
+    
 }
 
 std::string SoapyAirspyHF::readSetting(const std::string &key) const
